@@ -3,6 +3,8 @@
 import json
 import sys
 import os
+import sys
+import httpx
 from datetime import datetime
 from decorest import *
 
@@ -28,6 +30,7 @@ class OneproviderClient(RestClient):
     @accept('application/json')
     @query('token')
     @query('limit')
+    @timeout(120)
     def list_files(self, parent_id, token, limit=PAGE_SIZE):
         """List files"""
 
@@ -36,11 +39,14 @@ def generate_file_path():
     dt_format = '%y%m%d%H%M%S'
     return os.path.join(OUTPUT_DIR, f'backup_{SPACE_ID}_{datetime.now().strftime(dt_format)}.json')
 
+RETRY_COUNT_MAX = 5
 
 if __name__ == '__main__':
     op_client = OneproviderClient()
     is_last = False
     backup_file_path = generate_file_path()
+    status = 0
+    page_count = 0
     with open(backup_file_path, 'w') as f:
         with op_client.session_(verify=False) as s:
             print(f'Starting backup of space {SPACE_ID} to file {backup_file_path}...')
@@ -48,9 +54,24 @@ if __name__ == '__main__':
 
             f.write("[\n")
 
-            page_count = 0
+            retry_count = RETRY_COUNT_MAX
             while not is_last:
-                res = s.list_files(SPACE_ID, next_page_token)
+                try:
+                    res = s.list_files(SPACE_ID, next_page_token)
+                    retry_count = RETRY_COUNT_MAX
+                except HTTPErrorWrapper as e:
+                    if isinstance(e.wrapped, httpx.TimeoutException):
+                        retry_count -= 1
+                        if retry_count == 0:
+                            print("Maximum timeout retry exceeded - aborting...")
+                            status = 1
+                            break
+                        print(f"Retrying due to error: {e}")
+                        continue
+                    else:
+                        print(f"{e.response.text}")
+                        status = 1
+                        break
 
                 is_last = res['isLast']
 
@@ -72,6 +93,10 @@ if __name__ == '__main__':
                     print(f'  saved {PAGE_SIZE*page_count} paths')
 
             f.write("]\n")
+
+    if status != 0:
+        print(f"ERROR: Backup failed after {page_count*1000} items")
+        sys.exit(status)
 
     print(f'Compressing backup file to {backup_file_path}.zst')
 
