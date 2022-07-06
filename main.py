@@ -1,5 +1,10 @@
 #!/usr/local/bin/python3
 
+"""Authors: Bartek Kryza
+Copyright (C) 2022 Onedata
+This software is released under the MIT license cited in 'LICENSE'
+"""
+
 import json
 import sys
 import os
